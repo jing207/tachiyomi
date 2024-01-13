@@ -1,81 +1,93 @@
 package eu.kanade.domain.chapter.interactor
 
-import eu.kanade.data.chapter.NoChaptersException
-import eu.kanade.domain.chapter.model.Chapter
-import eu.kanade.domain.chapter.model.toChapterUpdate
-import eu.kanade.domain.chapter.model.toDbChapter
-import eu.kanade.domain.chapter.repository.ChapterRepository
+import eu.kanade.domain.chapter.model.copyFromSChapter
+import eu.kanade.domain.chapter.model.toSChapter
+import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.manga.model.Manga
-import eu.kanade.domain.manga.model.toDbManga
+import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.source.LocalSource
+import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import tachiyomi.data.chapter.ChapterSanitizer
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.NoChaptersException
+import tachiyomi.domain.chapter.model.toChapterUpdate
+import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.chapter.service.ChapterRecognition
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.source.local.isLocal
 import java.lang.Long.max
-import java.util.Date
+import java.time.ZonedDateTime
 import java.util.TreeSet
 
 class SyncChaptersWithSource(
-    private val downloadManager: DownloadManager = Injekt.get(),
-    private val chapterRepository: ChapterRepository = Injekt.get(),
-    private val shouldUpdateDbChapter: ShouldUpdateDbChapter = Injekt.get(),
-    private val updateManga: UpdateManga = Injekt.get(),
-    private val updateChapter: UpdateChapter = Injekt.get(),
-    private val getChapterByMangaId: GetChapterByMangaId = Injekt.get(),
+    private val downloadManager: DownloadManager,
+    private val downloadProvider: DownloadProvider,
+    private val chapterRepository: ChapterRepository,
+    private val shouldUpdateDbChapter: ShouldUpdateDbChapter,
+    private val updateManga: UpdateManga,
+    private val updateChapter: UpdateChapter,
+    private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val getExcludedScanlators: GetExcludedScanlators,
 ) {
 
+    /**
+     * Method to synchronize db chapters with source ones
+     *
+     * @param rawSourceChapters the chapters from the source.
+     * @param manga the manga the chapters belong to.
+     * @param source the source the manga belongs to.
+     * @return Newly added chapters
+     */
     suspend fun await(
         rawSourceChapters: List<SChapter>,
         manga: Manga,
         source: Source,
-    ): Pair<List<Chapter>, List<Chapter>> {
-        if (rawSourceChapters.isEmpty() && source.id != LocalSource.ID) {
+        manualFetch: Boolean = false,
+        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+    ): List<Chapter> {
+        if (rawSourceChapters.isEmpty() && !source.isLocal()) {
             throw NoChaptersException()
         }
+
+        val now = ZonedDateTime.now()
+        val nowMillis = now.toInstant().toEpochMilli()
 
         val sourceChapters = rawSourceChapters
             .distinctBy { it.url }
             .mapIndexed { i, sChapter ->
                 Chapter.create()
                     .copyFromSChapter(sChapter)
+                    .copy(name = with(ChapterSanitizer) { sChapter.name.sanitize(manga.title) })
                     .copy(mangaId = manga.id, sourceOrder = i.toLong())
             }
 
-        // Chapters from db.
-        val dbChapters = getChapterByMangaId.await(manga.id)
+        val dbChapters = getChaptersByMangaId.await(manga.id)
 
-        // Chapters from the source not in db.
-        val toAdd = mutableListOf<Chapter>()
-
-        // Chapters whose metadata have changed.
-        val toChange = mutableListOf<Chapter>()
-
-        // Chapters from the db not in source.
-        val toDelete = dbChapters.filterNot { dbChapter ->
+        val newChapters = mutableListOf<Chapter>()
+        val updatedChapters = mutableListOf<Chapter>()
+        val removedChapters = dbChapters.filterNot { dbChapter ->
             sourceChapters.any { sourceChapter ->
                 dbChapter.url == sourceChapter.url
             }
         }
 
-        val rightNow = Date().time
-
         // Used to not set upload date of older chapters
         // to a higher value than newer chapters
         var maxSeenUploadDate = 0L
 
-        val sManga = manga.toSManga()
         for (sourceChapter in sourceChapters) {
             var chapter = sourceChapter
 
             // Update metadata from source if necessary.
             if (source is HttpSource) {
                 val sChapter = chapter.toSChapter()
-                source.prepareNewChapter(sChapter, sManga)
+                source.prepareNewChapter(sChapter, manga.toSManga())
                 chapter = chapter.copyFromSChapter(sChapter)
             }
 
@@ -87,17 +99,22 @@ class SyncChaptersWithSource(
 
             if (dbChapter == null) {
                 val toAddChapter = if (chapter.dateUpload == 0L) {
-                    val altDateUpload = if (maxSeenUploadDate == 0L) rightNow else maxSeenUploadDate
+                    val altDateUpload = if (maxSeenUploadDate == 0L) nowMillis else maxSeenUploadDate
                     chapter.copy(dateUpload = altDateUpload)
                 } else {
                     maxSeenUploadDate = max(maxSeenUploadDate, sourceChapter.dateUpload)
                     chapter
                 }
-                toAdd.add(toAddChapter)
+                newChapters.add(toAddChapter)
             } else {
                 if (shouldUpdateDbChapter.await(dbChapter, chapter)) {
-                    if (dbChapter.name != chapter.name && downloadManager.isChapterDownloaded(dbChapter.toDbChapter(), manga.toDbManga())) {
-                        downloadManager.renameChapter(source, manga.toDbManga(), dbChapter.toDbChapter(), chapter.toDbChapter())
+                    val shouldRenameChapter = downloadProvider.isChapterDirNameChanged(dbChapter, chapter) &&
+                        downloadManager.isChapterDownloaded(
+                            dbChapter.name, dbChapter.scanlator, manga.title, manga.source,
+                        )
+
+                    if (shouldRenameChapter) {
+                        downloadManager.renameChapter(source, manga, dbChapter, chapter)
                     }
                     var toChangeChapter = dbChapter.copy(
                         name = chapter.name,
@@ -108,47 +125,53 @@ class SyncChaptersWithSource(
                     if (chapter.dateUpload != 0L) {
                         toChangeChapter = toChangeChapter.copy(dateUpload = chapter.dateUpload)
                     }
-                    toChange.add(toChangeChapter)
+                    updatedChapters.add(toChangeChapter)
                 }
             }
         }
 
-        // Return if there's nothing to add, delete or change, avoiding unnecessary db transactions.
-        if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
-            return Pair(emptyList(), emptyList())
+        // Return if there's nothing to add, delete, or update to avoid unnecessary db transactions.
+        if (newChapters.isEmpty() && removedChapters.isEmpty() && updatedChapters.isEmpty()) {
+            if (manualFetch || manga.fetchInterval == 0 || manga.nextUpdate < fetchWindow.first) {
+                updateManga.awaitUpdateFetchInterval(
+                    manga,
+                    now,
+                    fetchWindow,
+                )
+            }
+            return emptyList()
         }
 
         val reAdded = mutableListOf<Chapter>()
 
-        val deletedChapterNumbers = TreeSet<Float>()
-        val deletedReadChapterNumbers = TreeSet<Float>()
+        val deletedChapterNumbers = TreeSet<Double>()
+        val deletedReadChapterNumbers = TreeSet<Double>()
+        val deletedBookmarkedChapterNumbers = TreeSet<Double>()
 
-        toDelete.forEach { chapter ->
-            if (chapter.read) {
-                deletedReadChapterNumbers.add(chapter.chapterNumber)
-            }
+        removedChapters.forEach { chapter ->
+            if (chapter.read) deletedReadChapterNumbers.add(chapter.chapterNumber)
+            if (chapter.bookmark) deletedBookmarkedChapterNumbers.add(chapter.chapterNumber)
             deletedChapterNumbers.add(chapter.chapterNumber)
         }
 
-        val deletedChapterNumberDateFetchMap = toDelete.sortedByDescending { it.dateFetch }
+        val deletedChapterNumberDateFetchMap = removedChapters.sortedByDescending { it.dateFetch }
             .associate { it.chapterNumber to it.dateFetch }
 
         // Date fetch is set in such a way that the upper ones will have bigger value than the lower ones
         // Sources MUST return the chapters from most to less recent, which is common.
+        var itemCount = newChapters.size
+        var updatedToAdd = newChapters.map { toAddItem ->
+            var chapter = toAddItem.copy(dateFetch = nowMillis + itemCount--)
 
-        var itemCount = toAdd.size
-        var updatedToAdd = toAdd.map { toAddItem ->
-            var chapter = toAddItem.copy(dateFetch = rightNow + itemCount--)
+            if (chapter.isRecognizedNumber.not() || chapter.chapterNumber !in deletedChapterNumbers) return@map chapter
 
-            if (chapter.isRecognizedNumber.not() && chapter.chapterNumber !in deletedChapterNumbers) return@map chapter
-
-            if (chapter.chapterNumber in deletedReadChapterNumbers) {
-                chapter = chapter.copy(read = true)
-            }
+            chapter = chapter.copy(
+                read = chapter.chapterNumber in deletedReadChapterNumbers,
+                bookmark = chapter.chapterNumber in deletedBookmarkedChapterNumbers,
+            )
 
             // Try to to use the fetch date of the original entry to not pollute 'Updates' tab
-            val oldDateFetch = deletedChapterNumberDateFetchMap[chapter.chapterNumber]
-            oldDateFetch?.let {
+            deletedChapterNumberDateFetchMap[chapter.chapterNumber]?.let {
                 chapter = chapter.copy(dateFetch = it)
             }
 
@@ -157,8 +180,8 @@ class SyncChaptersWithSource(
             chapter
         }
 
-        if (toDelete.isNotEmpty()) {
-            val toDeleteIds = toDelete.map { it.id }
+        if (removedChapters.isNotEmpty()) {
+            val toDeleteIds = removedChapters.map { it.id }
             chapterRepository.removeChaptersWithIds(toDeleteIds)
         }
 
@@ -166,16 +189,22 @@ class SyncChaptersWithSource(
             updatedToAdd = chapterRepository.addAll(updatedToAdd)
         }
 
-        if (toChange.isNotEmpty()) {
-            val chapterUpdates = toChange.map { it.toChapterUpdate() }
+        if (updatedChapters.isNotEmpty()) {
+            val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
             updateChapter.awaitAll(chapterUpdates)
         }
+        updateManga.awaitUpdateFetchInterval(manga, now, fetchWindow)
 
         // Set this manga as updated since chapters were changed
         // Note that last_update actually represents last time the chapter list changed at all
         updateManga.awaitUpdateLastUpdate(manga.id)
 
-        @Suppress("ConvertArgumentToSet") // See tachiyomiorg/tachiyomi#6372.
-        return Pair(updatedToAdd.subtract(reAdded).toList(), toDelete.subtract(reAdded).toList())
+        val reAddedUrls = reAdded.map { it.url }.toHashSet()
+
+        val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
+
+        return updatedToAdd.filterNot {
+            it.url in reAddedUrls || it.scanlator in excludedScanlators
+        }
     }
 }

@@ -1,64 +1,64 @@
 package eu.kanade.presentation.browse
 
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import eu.kanade.domain.manga.model.Manga
-import eu.kanade.presentation.components.EmptyScreen
-import eu.kanade.presentation.components.LoadingScreen
-import eu.kanade.presentation.components.ScrollbarLazyColumn
+import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.manga.components.BaseMangaListItem
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.ui.browse.migration.manga.MigrateMangaState
-import eu.kanade.tachiyomi.ui.browse.migration.manga.MigrationMangaPresenter
+import eu.kanade.tachiyomi.ui.browse.migration.manga.MigrateMangaScreenModel
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.screens.EmptyScreen
 
 @Composable
 fun MigrateMangaScreen(
-    nestedScrollInterop: NestedScrollConnection,
-    presenter: MigrationMangaPresenter,
+    navigateUp: () -> Unit,
+    title: String?,
+    state: MigrateMangaScreenModel.State,
     onClickItem: (Manga) -> Unit,
     onClickCover: (Manga) -> Unit,
 ) {
-    val state by presenter.state.collectAsState()
-
-    when (state) {
-        MigrateMangaState.Loading -> LoadingScreen()
-        is MigrateMangaState.Error -> Text(text = (state as MigrateMangaState.Error).error.message!!)
-        is MigrateMangaState.Success -> {
-            MigrateMangaContent(
-                nestedScrollInterop = nestedScrollInterop,
-                list = (state as MigrateMangaState.Success).list,
-                onClickItem = onClickItem,
-                onClickCover = onClickCover,
+    Scaffold(
+        topBar = { scrollBehavior ->
+            AppBar(
+                title = title,
+                navigateUp = navigateUp,
+                scrollBehavior = scrollBehavior,
             )
+        },
+    ) { contentPadding ->
+        if (state.isEmpty) {
+            EmptyScreen(
+                stringRes = MR.strings.empty_screen,
+                modifier = Modifier.padding(contentPadding),
+            )
+            return@Scaffold
         }
+
+        MigrateMangaContent(
+            contentPadding = contentPadding,
+            state = state,
+            onClickItem = onClickItem,
+            onClickCover = onClickCover,
+        )
     }
 }
 
 @Composable
-fun MigrateMangaContent(
-    nestedScrollInterop: NestedScrollConnection,
-    list: List<Manga>,
+private fun MigrateMangaContent(
+    contentPadding: PaddingValues,
+    state: MigrateMangaScreenModel.State,
     onClickItem: (Manga) -> Unit,
     onClickCover: (Manga) -> Unit,
 ) {
-    if (list.isEmpty()) {
-        EmptyScreen(textResource = R.string.empty_screen)
-        return
-    }
-    ScrollbarLazyColumn(
-        modifier = Modifier.nestedScroll(nestedScrollInterop),
-        contentPadding = WindowInsets.navigationBars.asPaddingValues(),
+    FastScrollLazyColumn(
+        contentPadding = contentPadding,
     ) {
-        items(list) { manga ->
+        items(state.titles) { manga ->
             MigrateMangaItem(
                 manga = manga,
                 onClickItem = onClickItem,
@@ -69,11 +69,11 @@ fun MigrateMangaContent(
 }
 
 @Composable
-fun MigrateMangaItem(
-    modifier: Modifier = Modifier,
+private fun MigrateMangaItem(
     manga: Manga,
     onClickItem: (Manga) -> Unit,
     onClickCover: (Manga) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BaseMangaListItem(
         modifier = modifier,

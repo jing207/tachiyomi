@@ -23,9 +23,9 @@ data class Record(
     val latestChapter: Int? = null,
 )
 
-fun Record.toTrackSearch(id: Int): TrackSearch {
+fun Record.toTrackSearch(id: Long): TrackSearch {
     return TrackSearch.create(id).apply {
-        media_id = this@toTrackSearch.seriesId ?: 0L
+        remote_id = this@toTrackSearch.seriesId ?: 0L
         title = this@toTrackSearch.title?.htmlDecode() ?: ""
         total_chapters = 0
         cover_url = this@toTrackSearch.image?.url?.original ?: ""

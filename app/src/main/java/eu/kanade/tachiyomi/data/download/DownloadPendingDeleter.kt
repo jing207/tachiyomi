@@ -2,22 +2,23 @@ package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import androidx.core.content.edit
-import eu.kanade.tachiyomi.data.database.models.Chapter
-import eu.kanade.tachiyomi.data.database.models.Manga
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import uy.kohesive.injekt.injectLazy
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Class used to keep a list of chapters for future deletion.
  *
  * @param context the application context.
  */
-class DownloadPendingDeleter(context: Context) {
-
-    private val json: Json by injectLazy()
+class DownloadPendingDeleter(
+    context: Context,
+    private val json: Json = Injekt.get(),
+) {
 
     /**
      * Preferences used to store the list of chapters to delete.
@@ -49,7 +50,7 @@ class DownloadPendingDeleter(context: Context) {
             // Last entry matches the manga, reuse it to avoid decoding json from preferences
             lastEntry.copy(chapters = newChapters)
         } else {
-            val existingEntry = preferences.getString(manga.id!!.toString(), null)
+            val existingEntry = preferences.getString(manga.id.toString(), null)
             if (existingEntry != null) {
                 // Existing entry found on preferences, decode json and add the new chapter
                 val savedEntry = json.decodeFromString<Entry>(existingEntry)
@@ -121,6 +122,36 @@ class DownloadPendingDeleter(context: Context) {
     }
 
     /**
+     * Returns a manga entry from a manga model.
+     */
+    private fun Manga.toEntry() = MangaEntry(id, url, title, source)
+
+    /**
+     * Returns a chapter entry from a chapter model.
+     */
+    private fun Chapter.toEntry() = ChapterEntry(id, url, name, scanlator)
+
+    /**
+     * Returns a manga model from a manga entry.
+     */
+    private fun MangaEntry.toModel() = Manga.create().copy(
+        url = url,
+        title = title,
+        source = source,
+        id = id,
+    )
+
+    /**
+     * Returns a chapter model from a chapter entry.
+     */
+    private fun ChapterEntry.toModel() = Chapter.create().copy(
+        id = id,
+        url = url,
+        name = name,
+        scanlator = scanlator,
+    )
+
+    /**
      * Class used to save an entry of chapters with their manga into preferences.
      */
     @Serializable
@@ -150,39 +181,4 @@ class DownloadPendingDeleter(context: Context) {
         val title: String,
         val source: Long,
     )
-
-    /**
-     * Returns a manga entry from a manga model.
-     */
-    private fun Manga.toEntry(): MangaEntry {
-        return MangaEntry(id!!, url, title, source)
-    }
-
-    /**
-     * Returns a chapter entry from a chapter model.
-     */
-    private fun Chapter.toEntry(): ChapterEntry {
-        return ChapterEntry(id!!, url, name, scanlator)
-    }
-
-    /**
-     * Returns a manga model from a manga entry.
-     */
-    private fun MangaEntry.toModel(): Manga {
-        return Manga.create(url, title, source).also {
-            it.id = id
-        }
-    }
-
-    /**
-     * Returns a chapter model from a chapter entry.
-     */
-    private fun ChapterEntry.toModel(): Chapter {
-        return Chapter.create().also {
-            it.id = id
-            it.url = url
-            it.name = name
-            it.scanlator = scanlator
-        }
-    }
 }

@@ -1,36 +1,61 @@
+import com.android.build.gradle.BaseExtension
+import com.android.build.gradle.BasePlugin
+import org.gradle.api.tasks.testing.logging.TestLogEvent
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
 buildscript {
     dependencies {
-        // Pinning to older version of R8 due to weird forced optimizations in newer versions in
-        // version bundled with AGP
-        // https://mvnrepository.com/artifact/com.android.tools/r8?repo=google
-        classpath("com.android.tools:r8:3.1.66")
         classpath(libs.android.shortcut.gradle)
-        classpath(libs.google.services.gradle)
         classpath(libs.aboutLibraries.gradle)
-        classpath(kotlinx.serialization.gradle)
         classpath(libs.sqldelight.gradle)
+        classpath(libs.moko.gradle)
     }
 }
 
 plugins {
-    alias(androidx.plugins.application) apply false
-    alias(androidx.plugins.library) apply false
-    alias(kotlinx.plugins.android) apply false
-    alias(libs.plugins.kotlinter)
-    alias(libs.plugins.versionsx)
+    alias(kotlinx.plugins.serialization) apply false
 }
 
 subprojects {
-    apply<org.jmailen.gradle.kotlinter.KotlinterPlugin>()
+    tasks.withType<KotlinJvmCompile> {
+        kotlinOptions {
+            jvmTarget = JavaVersion.VERSION_17.toString()
+        }
+    }
 
-    kotlinter {
-        experimentalRules = true
+    tasks.withType<Test> {
+        useJUnitPlatform()
+        testLogging {
+            events(TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED)
+        }
+    }
 
-        // Doesn't play well with Android Studio
-        disabledRules = arrayOf("experimental:argument-list-wrapping")
+    plugins.withType<BasePlugin> {
+        plugins.apply("tachiyomi.lint")
+
+        configure<BaseExtension> {
+            compileSdkVersion(AndroidConfig.compileSdk)
+            defaultConfig {
+                minSdk = AndroidConfig.minSdk
+                targetSdk = AndroidConfig.targetSdk
+                ndk {
+                    version = AndroidConfig.ndk
+                }
+            }
+
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+                isCoreLibraryDesugaringEnabled = true
+            }
+
+            dependencies {
+                add("coreLibraryDesugaring", libs.desugar)
+            }
+        }
     }
 }
 
 tasks.register<Delete>("clean") {
-    delete(rootProject.buildDir)
+    delete(rootProject.layout.buildDirectory)
 }

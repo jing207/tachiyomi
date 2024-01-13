@@ -2,10 +2,8 @@ package eu.kanade.presentation.browse
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -19,161 +17,113 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import eu.kanade.domain.source.model.Pin
-import eu.kanade.domain.source.model.Source
 import eu.kanade.presentation.browse.components.BaseSourceItem
-import eu.kanade.presentation.components.EmptyScreen
-import eu.kanade.presentation.components.LoadingScreen
-import eu.kanade.presentation.components.ScrollbarLazyColumn
-import eu.kanade.presentation.theme.header
-import eu.kanade.presentation.util.horizontalPadding
-import eu.kanade.presentation.util.plus
-import eu.kanade.presentation.util.topPaddingValues
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.source.LocalSource
-import eu.kanade.tachiyomi.ui.browse.source.SourceState
-import eu.kanade.tachiyomi.ui.browse.source.SourcesPresenter
+import eu.kanade.tachiyomi.ui.browse.source.SourcesScreenModel
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import tachiyomi.domain.source.model.Pin
+import tachiyomi.domain.source.model.Source
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.ScrollbarLazyColumn
+import tachiyomi.presentation.core.components.material.SecondaryItemAlpha
+import tachiyomi.presentation.core.components.material.padding
+import tachiyomi.presentation.core.components.material.topSmallPaddingValues
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.theme.header
+import tachiyomi.presentation.core.util.plus
+import tachiyomi.source.local.isLocal
 
 @Composable
 fun SourcesScreen(
-    nestedScrollInterop: NestedScrollConnection,
-    presenter: SourcesPresenter,
-    onClickItem: (Source) -> Unit,
-    onClickDisable: (Source) -> Unit,
-    onClickLatest: (Source) -> Unit,
+    state: SourcesScreenModel.State,
+    contentPadding: PaddingValues,
+    onClickItem: (Source, Listing) -> Unit,
     onClickPin: (Source) -> Unit,
+    onLongClickItem: (Source) -> Unit,
 ) {
-    val state by presenter.state.collectAsState()
-
-    when (state) {
-        is SourceState.Loading -> LoadingScreen()
-        is SourceState.Error -> Text(text = (state as SourceState.Error).error.message!!)
-        is SourceState.Success -> SourceList(
-            nestedScrollConnection = nestedScrollInterop,
-            list = (state as SourceState.Success).uiModels,
-            onClickItem = onClickItem,
-            onClickDisable = onClickDisable,
-            onClickLatest = onClickLatest,
-            onClickPin = onClickPin,
+    when {
+        state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
+        state.isEmpty -> EmptyScreen(
+            stringRes = MR.strings.source_empty_screen,
+            modifier = Modifier.padding(contentPadding),
         )
-    }
-}
-
-@Composable
-fun SourceList(
-    nestedScrollConnection: NestedScrollConnection,
-    list: List<SourceUiModel>,
-    onClickItem: (Source) -> Unit,
-    onClickDisable: (Source) -> Unit,
-    onClickLatest: (Source) -> Unit,
-    onClickPin: (Source) -> Unit,
-) {
-    if (list.isEmpty()) {
-        EmptyScreen(textResource = R.string.source_empty_screen)
-        return
-    }
-
-    var sourceState by remember { mutableStateOf<Source?>(null) }
-
-    ScrollbarLazyColumn(
-        modifier = Modifier.nestedScroll(nestedScrollConnection),
-        contentPadding = WindowInsets.navigationBars.asPaddingValues() + topPaddingValues,
-    ) {
-        items(
-            items = list,
-            contentType = {
-                when (it) {
-                    is SourceUiModel.Header -> "header"
-                    is SourceUiModel.Item -> "item"
+        else -> {
+            ScrollbarLazyColumn(
+                contentPadding = contentPadding + topSmallPaddingValues,
+            ) {
+                items(
+                    items = state.items,
+                    contentType = {
+                        when (it) {
+                            is SourceUiModel.Header -> "header"
+                            is SourceUiModel.Item -> "item"
+                        }
+                    },
+                    key = {
+                        when (it) {
+                            is SourceUiModel.Header -> it.hashCode()
+                            is SourceUiModel.Item -> "source-${it.source.key()}"
+                        }
+                    },
+                ) { model ->
+                    when (model) {
+                        is SourceUiModel.Header -> {
+                            SourceHeader(
+                                modifier = Modifier.animateItemPlacement(),
+                                language = model.language,
+                            )
+                        }
+                        is SourceUiModel.Item -> SourceItem(
+                            modifier = Modifier.animateItemPlacement(),
+                            source = model.source,
+                            onClickItem = onClickItem,
+                            onLongClickItem = onLongClickItem,
+                            onClickPin = onClickPin,
+                        )
+                    }
                 }
-            },
-            key = {
-                when (it) {
-                    is SourceUiModel.Header -> it.hashCode()
-                    is SourceUiModel.Item -> it.source.key()
-                }
-            },
-        ) { model ->
-            when (model) {
-                is SourceUiModel.Header -> {
-                    SourceHeader(
-                        modifier = Modifier.animateItemPlacement(),
-                        language = model.language,
-                    )
-                }
-                is SourceUiModel.Item -> SourceItem(
-                    modifier = Modifier.animateItemPlacement(),
-                    source = model.source,
-                    onClickItem = onClickItem,
-                    onLongClickItem = { sourceState = it },
-                    onClickLatest = onClickLatest,
-                    onClickPin = onClickPin,
-                )
             }
         }
     }
-
-    if (sourceState != null) {
-        SourceOptionsDialog(
-            source = sourceState!!,
-            onClickPin = {
-                onClickPin(sourceState!!)
-                sourceState = null
-            },
-            onClickDisable = {
-                onClickDisable(sourceState!!)
-                sourceState = null
-            },
-            onDismiss = { sourceState = null },
-        )
-    }
 }
 
 @Composable
-fun SourceHeader(
-    modifier: Modifier = Modifier,
+private fun SourceHeader(
     language: String,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     Text(
         text = LocaleHelper.getSourceDisplayName(language, context),
         modifier = modifier
-            .padding(horizontal = horizontalPadding, vertical = 8.dp),
+            .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
         style = MaterialTheme.typography.header,
     )
 }
 
 @Composable
-fun SourceItem(
-    modifier: Modifier = Modifier,
+private fun SourceItem(
     source: Source,
-    onClickItem: (Source) -> Unit,
+    onClickItem: (Source, Listing) -> Unit,
     onLongClickItem: (Source) -> Unit,
-    onClickLatest: (Source) -> Unit,
     onClickPin: (Source) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BaseSourceItem(
         modifier = modifier,
         source = source,
-        onClickItem = { onClickItem(source) },
+        onClickItem = { onClickItem(source, Listing.Popular) },
         onLongClickItem = { onLongClickItem(source) },
-        action = { source ->
+        action = {
             if (source.supportsLatest) {
-                TextButton(onClick = { onClickLatest(source) }) {
+                TextButton(onClick = { onClickItem(source, Listing.Latest) }) {
                     Text(
-                        text = stringResource(R.string.latest),
+                        text = stringResource(MR.strings.latest),
                         style = LocalTextStyle.current.copy(
                             color = MaterialTheme.colorScheme.primary,
                         ),
@@ -189,17 +139,24 @@ fun SourceItem(
 }
 
 @Composable
-fun SourcePinButton(
+private fun SourcePinButton(
     isPinned: Boolean,
     onClick: () -> Unit,
 ) {
     val icon = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin
-    val tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+    val tint = if (isPinned) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onBackground.copy(
+            alpha = SecondaryItemAlpha,
+        )
+    }
+    val description = if (isPinned) MR.strings.action_unpin else MR.strings.action_pin
     IconButton(onClick = onClick) {
         Icon(
             imageVector = icon,
-            contentDescription = "",
             tint = tint,
+            contentDescription = stringResource(description),
         )
     }
 }
@@ -213,21 +170,21 @@ fun SourceOptionsDialog(
 ) {
     AlertDialog(
         title = {
-            Text(text = source.nameWithLanguage)
+            Text(text = source.visualName)
         },
         text = {
             Column {
-                val textId = if (Pin.Pinned in source.pin) R.string.action_unpin else R.string.action_pin
+                val textId = if (Pin.Pinned in source.pin) MR.strings.action_unpin else MR.strings.action_pin
                 Text(
-                    text = stringResource(id = textId),
+                    text = stringResource(textId),
                     modifier = Modifier
                         .clickable(onClick = onClickPin)
                         .fillMaxWidth()
                         .padding(vertical = 16.dp),
                 )
-                if (source.id != LocalSource.ID) {
+                if (!source.isLocal()) {
                     Text(
-                        text = stringResource(R.string.action_disable),
+                        text = stringResource(MR.strings.action_disable),
                         modifier = Modifier
                             .clickable(onClick = onClickDisable)
                             .fillMaxWidth()
@@ -241,7 +198,7 @@ fun SourceOptionsDialog(
     )
 }
 
-sealed class SourceUiModel {
-    data class Item(val source: Source) : SourceUiModel()
-    data class Header(val language: String) : SourceUiModel()
+sealed interface SourceUiModel {
+    data class Item(val source: Source) : SourceUiModel
+    data class Header(val language: String) : SourceUiModel
 }

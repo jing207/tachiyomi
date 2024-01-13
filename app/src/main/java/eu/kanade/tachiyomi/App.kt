@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi
 
 import android.annotation.SuppressLint
-import android.app.ActivityManager
 import android.app.Application
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -11,9 +10,7 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Looper
 import android.webkit.WebView
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.getSystemService
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -25,32 +22,37 @@ import coil.decode.ImageDecoderDecoder
 import coil.disk.DiskCache
 import coil.util.DebugLogger
 import eu.kanade.domain.DomainModule
-import eu.kanade.tachiyomi.data.coil.DomainMangaKeyer
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.setAppCompatDelegateThemeMode
+import eu.kanade.tachiyomi.crash.CrashActivity
+import eu.kanade.tachiyomi.crash.GlobalExceptionHandler
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher
 import eu.kanade.tachiyomi.data.coil.MangaCoverKeyer
 import eu.kanade.tachiyomi.data.coil.MangaKeyer
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.data.preference.PreferenceValues
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.di.AppModule
+import eu.kanade.tachiyomi.di.PreferenceModule
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegate
-import eu.kanade.tachiyomi.util.preference.asImmediateFlow
-import eu.kanade.tachiyomi.util.system.AuthenticatorUtil
+import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
-import eu.kanade.tachiyomi.util.system.isDevFlavor
-import eu.kanade.tachiyomi.util.system.logcat
-import eu.kanade.tachiyomi.util.system.notification
+import eu.kanade.tachiyomi.util.system.cancelNotification
+import eu.kanade.tachiyomi.util.system.notify
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
 import logcat.LogPriority
 import logcat.LogcatLogger
-import org.acra.config.httpSender
-import org.acra.ktx.initAcra
-import org.acra.sender.HttpSender
 import org.conscrypt.Conscrypt
+import tachiyomi.core.i18n.stringResource
+import tachiyomi.core.util.system.logcat
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.widget.WidgetManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
@@ -58,13 +60,16 @@ import java.security.Security
 
 class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
 
-    private val preferences: PreferencesHelper by injectLazy()
+    private val basePreferences: BasePreferences by injectLazy()
+    private val networkPreferences: NetworkPreferences by injectLazy()
 
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
 
     @SuppressLint("LaunchActivityFromNotification")
     override fun onCreate() {
         super<Application>.onCreate()
+
+        GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)
 
         // TLS 1.3 support for Android < 10
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -77,23 +82,25 @@ class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
             if (packageName != process) WebView.setDataDirectorySuffix(process)
         }
 
+        Injekt.importModule(PreferenceModule(this))
         Injekt.importModule(AppModule(this))
         Injekt.importModule(DomainModule())
 
-        setupAcra()
         setupNotificationChannels()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
         // Show notification to disable Incognito Mode when it's enabled
-        preferences.incognitoMode().asFlow()
+        basePreferences.incognitoMode().changes()
             .onEach { enabled ->
-                val notificationManager = NotificationManagerCompat.from(this)
                 if (enabled) {
                     disableIncognitoReceiver.register()
-                    val notification = notification(Notifications.CHANNEL_INCOGNITO_MODE) {
-                        setContentTitle(getString(R.string.pref_incognito_mode))
-                        setContentText(getString(R.string.notification_incognito_text))
+                    notify(
+                        Notifications.ID_INCOGNITO_MODE,
+                        Notifications.CHANNEL_INCOGNITO_MODE,
+                    ) {
+                        setContentTitle(stringResource(MR.strings.pref_incognito_mode))
+                        setContentText(stringResource(MR.strings.notification_incognito_text))
                         setSmallIcon(R.drawable.ic_glasses_24dp)
                         setOngoing(true)
 
@@ -105,26 +112,21 @@ class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
                         )
                         setContentIntent(pendingIntent)
                     }
-                    notificationManager.notify(Notifications.ID_INCOGNITO_MODE, notification)
                 } else {
                     disableIncognitoReceiver.unregister()
-                    notificationManager.cancel(Notifications.ID_INCOGNITO_MODE)
+                    cancelNotification(Notifications.ID_INCOGNITO_MODE)
                 }
             }
             .launchIn(ProcessLifecycleOwner.get().lifecycleScope)
 
-        preferences.themeMode()
-            .asImmediateFlow {
-                AppCompatDelegate.setDefaultNightMode(
-                    when (it) {
-                        PreferenceValues.ThemeMode.light -> AppCompatDelegate.MODE_NIGHT_NO
-                        PreferenceValues.ThemeMode.dark -> AppCompatDelegate.MODE_NIGHT_YES
-                        PreferenceValues.ThemeMode.system -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-                    },
-                )
-            }.launchIn(ProcessLifecycleOwner.get().lifecycleScope)
+        setAppCompatDelegateThemeMode(Injekt.get<UiPreferences>().themeMode().get())
 
-        if (!LogcatLogger.isInstalled && preferences.verboseLogging()) {
+        // Updates widget update
+        with(WidgetManager(Injekt.get(), Injekt.get())) {
+            init(ProcessLifecycleOwner.get().lifecycleScope)
+        }
+
+        if (!LogcatLogger.isInstalled && networkPreferences.verboseLogging().get()) {
             LogcatLogger.install(AndroidLogcatLogger(LogPriority.VERBOSE))
         }
     }
@@ -140,25 +142,30 @@ class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
                     add(GifDecoder.Factory())
                 }
                 add(TachiyomiImageDecoder.Factory())
-                add(MangaCoverFetcher.Factory(lazy(callFactoryInit), lazy(diskCacheInit)))
-                add(MangaCoverFetcher.DomainMangaFactory(lazy(callFactoryInit), lazy(diskCacheInit)))
+                add(MangaCoverFetcher.MangaFactory(lazy(callFactoryInit), lazy(diskCacheInit)))
                 add(MangaCoverFetcher.MangaCoverFactory(lazy(callFactoryInit), lazy(diskCacheInit)))
                 add(MangaKeyer())
-                add(DomainMangaKeyer())
                 add(MangaCoverKeyer())
             }
             callFactory(callFactoryInit)
             diskCache(diskCacheInit)
             crossfade((300 * this@App.animatorDurationScale).toInt())
-            allowRgb565(getSystemService<ActivityManager>()!!.isLowRamDevice)
-            if (preferences.verboseLogging()) logger(DebugLogger())
+            allowRgb565(DeviceUtil.isLowRamDevice(this@App))
+            if (networkPreferences.verboseLogging().get()) logger(DebugLogger())
+
+            // Coil spawns a new thread for every image load by default
+            fetcherDispatcher(Dispatchers.IO.limitedParallelism(8))
+            decoderDispatcher(Dispatchers.IO.limitedParallelism(2))
+            transformationDispatcher(Dispatchers.IO.limitedParallelism(2))
         }.build()
     }
 
+    override fun onStart(owner: LifecycleOwner) {
+        SecureActivityDelegate.onApplicationStart()
+    }
+
     override fun onStop(owner: LifecycleOwner) {
-        if (!AuthenticatorUtil.isAuthenticating && preferences.lockAppAfter().get() >= 0) {
-            SecureActivityDelegate.locked = true
-        }
+        SecureActivityDelegate.onApplicationStopped()
     }
 
     override fun getPackageName(): String {
@@ -176,27 +183,13 @@ class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
                 if (chromiumElement?.methodName.equals("getAll", ignoreCase = true)) {
                     return WebViewUtil.SPOOF_PACKAGE_NAME
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
             }
         }
         return super.getPackageName()
     }
 
-    protected open fun setupAcra() {
-        if (isDevFlavor.not()) {
-            initAcra {
-                buildConfigClass = BuildConfig::class.java
-                excludeMatchingSharedPreferencesKeys = listOf(".*username.*", ".*password.*", ".*token.*")
-
-                httpSender {
-                    uri = BuildConfig.ACRA_URI
-                    httpMethod = HttpSender.Method.PUT
-                }
-            }
-        }
-    }
-
-    protected open fun setupNotificationChannels() {
+    private fun setupNotificationChannels() {
         try {
             Notifications.createChannels(this)
         } catch (e: Exception) {
@@ -208,12 +201,17 @@ class App : Application(), DefaultLifecycleObserver, ImageLoaderFactory {
         private var registered = false
 
         override fun onReceive(context: Context, intent: Intent) {
-            preferences.incognitoMode().set(false)
+            basePreferences.incognitoMode().set(false)
         }
 
         fun register() {
             if (!registered) {
-                registerReceiver(this, IntentFilter(ACTION_DISABLE_INCOGNITO_MODE))
+                ContextCompat.registerReceiver(
+                    this@App,
+                    this,
+                    IntentFilter(ACTION_DISABLE_INCOGNITO_MODE),
+                    ContextCompat.RECEIVER_NOT_EXPORTED,
+                )
                 registered = true
             }
         }
@@ -232,7 +230,7 @@ private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNIT
 /**
  * Direct copy of Coil's internal SingletonDiskCache so that [MangaCoverFetcher] can access it.
  */
-internal object CoilDiskCache {
+private object CoilDiskCache {
 
     private const val FOLDER_NAME = "image_cache"
     private var instance: DiskCache? = null

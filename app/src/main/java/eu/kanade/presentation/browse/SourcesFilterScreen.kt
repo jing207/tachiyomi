@@ -1,127 +1,118 @@
 package eu.kanade.presentation.browse
 
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import eu.kanade.domain.source.model.Source
 import eu.kanade.presentation.browse.components.BaseSourceItem
-import eu.kanade.presentation.components.EmptyScreen
-import eu.kanade.presentation.components.LoadingScreen
-import eu.kanade.presentation.components.PreferenceRow
-import eu.kanade.presentation.components.ScrollbarLazyColumn
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.ui.browse.source.FilterUiModel
-import eu.kanade.tachiyomi.ui.browse.source.SourceFilterState
-import eu.kanade.tachiyomi.ui.browse.source.SourcesFilterPresenter
+import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
+import eu.kanade.tachiyomi.ui.browse.source.SourcesFilterScreenModel
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import tachiyomi.domain.source.model.Source
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.screens.EmptyScreen
 
 @Composable
 fun SourcesFilterScreen(
-    nestedScrollInterop: NestedScrollConnection,
-    presenter: SourcesFilterPresenter,
-    onClickLang: (String) -> Unit,
+    navigateUp: () -> Unit,
+    state: SourcesFilterScreenModel.State.Success,
+    onClickLanguage: (String) -> Unit,
     onClickSource: (Source) -> Unit,
 ) {
-    val state by presenter.state.collectAsState()
-
-    when (state) {
-        is SourceFilterState.Loading -> LoadingScreen()
-        is SourceFilterState.Error -> Text(text = (state as SourceFilterState.Error).error.message!!)
-        is SourceFilterState.Success ->
-            SourcesFilterContent(
-                nestedScrollInterop = nestedScrollInterop,
-                items = (state as SourceFilterState.Success).models,
-                onClickLang = onClickLang,
-                onClickSource = onClickSource,
+    Scaffold(
+        topBar = { scrollBehavior ->
+            AppBar(
+                title = stringResource(MR.strings.label_sources),
+                navigateUp = navigateUp,
+                scrollBehavior = scrollBehavior,
             )
+        },
+    ) { contentPadding ->
+        if (state.isEmpty) {
+            EmptyScreen(
+                stringRes = MR.strings.source_filter_empty_screen,
+                modifier = Modifier.padding(contentPadding),
+            )
+            return@Scaffold
+        }
+        SourcesFilterContent(
+            contentPadding = contentPadding,
+            state = state,
+            onClickLanguage = onClickLanguage,
+            onClickSource = onClickSource,
+        )
     }
 }
 
 @Composable
-fun SourcesFilterContent(
-    nestedScrollInterop: NestedScrollConnection,
-    items: List<FilterUiModel>,
-    onClickLang: (String) -> Unit,
+private fun SourcesFilterContent(
+    contentPadding: PaddingValues,
+    state: SourcesFilterScreenModel.State.Success,
+    onClickLanguage: (String) -> Unit,
     onClickSource: (Source) -> Unit,
 ) {
-    if (items.isEmpty()) {
-        EmptyScreen(textResource = R.string.source_filter_empty_screen)
-        return
-    }
-
-    ScrollbarLazyColumn(
-        modifier = Modifier.nestedScroll(nestedScrollInterop),
-        contentPadding = WindowInsets.navigationBars.asPaddingValues(),
+    FastScrollLazyColumn(
+        contentPadding = contentPadding,
     ) {
-        items(
-            items = items,
-            contentType = {
-                when (it) {
-                    is FilterUiModel.Header -> "header"
-                    is FilterUiModel.Item -> "item"
-                }
-            },
-            key = {
-                when (it) {
-                    is FilterUiModel.Header -> it.hashCode()
-                    is FilterUiModel.Item -> it.source.key()
-                }
-            },
-        ) { model ->
-            when (model) {
-                is FilterUiModel.Header -> {
-                    SourcesFilterHeader(
+        state.items.forEach { (language, sources) ->
+            val enabled = language in state.enabledLanguages
+            item(
+                key = language,
+                contentType = "source-filter-header",
+            ) {
+                SourcesFilterHeader(
+                    modifier = Modifier.animateItemPlacement(),
+                    language = language,
+                    enabled = enabled,
+                    onClickItem = onClickLanguage,
+                )
+            }
+            if (enabled) {
+                items(
+                    items = sources,
+                    key = { "source-filter-${it.key()}" },
+                    contentType = { "source-filter-item" },
+                ) { source ->
+                    SourcesFilterItem(
                         modifier = Modifier.animateItemPlacement(),
-                        language = model.language,
-                        enabled = model.enabled,
-                        onClickItem = onClickLang,
+                        source = source,
+                        enabled = "${source.id}" !in state.disabledSources,
+                        onClickItem = onClickSource,
                     )
                 }
-                is FilterUiModel.Item -> SourcesFilterItem(
-                    modifier = Modifier.animateItemPlacement(),
-                    source = model.source,
-                    enabled = model.enabled,
-                    onClickItem = onClickSource,
-                )
             }
         }
     }
 }
 
 @Composable
-fun SourcesFilterHeader(
-    modifier: Modifier,
+private fun SourcesFilterHeader(
     language: String,
     enabled: Boolean,
     onClickItem: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    PreferenceRow(
+    SwitchPreferenceWidget(
         modifier = modifier,
         title = LocaleHelper.getSourceDisplayName(language, LocalContext.current),
-        action = {
-            Switch(checked = enabled, onCheckedChange = null)
-        },
-        onClick = { onClickItem(language) },
+        checked = enabled,
+        onCheckedChanged = { onClickItem(language) },
     )
 }
 
 @Composable
-fun SourcesFilterItem(
-    modifier: Modifier,
+private fun SourcesFilterItem(
     source: Source,
     enabled: Boolean,
     onClickItem: (Source) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BaseSourceItem(
         modifier = modifier,

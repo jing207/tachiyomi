@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.data.cache
 
 import android.content.Context
-import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import tachiyomi.domain.manga.model.Manga
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -10,7 +10,6 @@ import java.io.InputStream
 /**
  * Class used to create cover cache.
  * It is used to store the covers of the library.
- * Makes use of Glide (which can avoid repeating requests) to download covers.
  * Names of files are created with the md5 of the thumbnail URL.
  *
  * @param context the application context.
@@ -76,7 +75,7 @@ class CoverCache(private val context: Context) {
     fun deleteFromCache(manga: Manga, deleteCustomCover: Boolean = false): Int {
         var deleted = 0
 
-        getCoverFile(manga.thumbnail_url)?.let {
+        getCoverFile(manga.thumbnailUrl)?.let {
             if (it.exists() && it.delete()) ++deleted
         }
 

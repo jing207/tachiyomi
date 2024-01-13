@@ -6,36 +6,26 @@ plugins {
     kotlin("android")
     kotlin("plugin.serialization")
     id("com.github.zellius.shortcut-helper")
-    id("com.squareup.sqldelight")
-}
-
-if (gradle.startParameter.taskRequests.toString().contains("Standard")) {
-    apply<com.google.gms.googleservices.GoogleServicesPlugin>()
 }
 
 shortcutHelper.setFilePath("./shortcuts.xml")
 
-val SUPPORTED_ABIS = setOf("armeabi-v7a", "arm64-v8a", "x86")
+val SUPPORTED_ABIS = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 
 android {
-    compileSdk = AndroidConfig.compileSdk
-    ndkVersion = AndroidConfig.ndk
+    namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
         applicationId = "eu.kanade.tachiyomi"
-        minSdk = AndroidConfig.minSdk
-        targetSdk = AndroidConfig.targetSdk
-        versionCode = 81
-        versionName = "0.13.4"
+
+        versionCode = 119
+        versionName = "0.15.3"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime()}\"")
         buildConfigField("boolean", "INCLUDE_UPDATER", "false")
         buildConfigField("boolean", "PREVIEW", "false")
-
-        // Please disable ACRA or use your own instance in forked versions of the project
-        buildConfigField("String", "ACRA_URI", "\"https://tachiyomi.kanade.eu/crash_report\"")
 
         ndk {
             abiFilters += SUPPORTED_ABIS
@@ -57,6 +47,7 @@ android {
         named("debug") {
             versionNameSuffix = "-${getCommitCount()}"
             applicationIdSuffix = ".debug"
+            isPseudoLocalesEnabled = true
         }
         named("release") {
             isShrinkResources = true
@@ -67,15 +58,27 @@ android {
             initWith(getByName("release"))
             buildConfigField("boolean", "PREVIEW", "true")
 
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks.add("release")
             val debugType = getByName("debug")
-            signingConfig = debugType.signingConfig
             versionNameSuffix = debugType.versionNameSuffix
             applicationIdSuffix = debugType.applicationIdSuffix
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks.add("release")
+            isDebuggable = false
+            isProfileable = true
+            versionNameSuffix = "-benchmark"
+            applicationIdSuffix = ".benchmark"
         }
     }
 
     sourceSets {
         getByName("preview").res.srcDirs("src/debug/res")
+        getByName("benchmark").res.srcDirs("src/debug/res")
     }
 
     flavorDimensions.add("default")
@@ -86,22 +89,24 @@ android {
             dimension = "default"
         }
         create("dev") {
-            resourceConfigurations.addAll(listOf("en", "xxhdpi"))
+            // Include pseudolocales: https://developer.android.com/guide/topics/resources/pseudolocales
+            resourceConfigurations.addAll(listOf("en", "en_XA", "ar_XB", "xxhdpi"))
             dimension = "default"
         }
     }
 
-    packagingOptions {
-        resources.excludes.addAll(listOf(
-            "META-INF/DEPENDENCIES",
-            "LICENSE.txt",
-            "META-INF/LICENSE",
-            "META-INF/LICENSE.txt",
-            "META-INF/README.md",
-            "META-INF/NOTICE",
-            "META-INF/*.kotlin_module",
-            "META-INF/*.version",
-        ))
+    packaging {
+        resources.excludes.addAll(
+            listOf(
+                "META-INF/DEPENDENCIES",
+                "LICENSE.txt",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/README.md",
+                "META-INF/NOTICE",
+                "META-INF/*.kotlin_module",
+            ),
+        )
     }
 
     dependenciesInfo {
@@ -111,6 +116,7 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+        buildConfig = true
 
         // Disable some unused things
         aidl = false
@@ -119,92 +125,79 @@ android {
     }
 
     lint {
-        disable.addAll(listOf("MissingTranslation", "ExtraTranslation"))
         abortOnError = false
         checkReleaseBuilds = false
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = compose.versions.compose.get()
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
-    }
-
-    sqldelight {
-        database("Database") {
-            packageName = "eu.kanade.tachiyomi"
-            dialect = "sqlite:3.24"
-        }
+        kotlinCompilerExtensionVersion = compose.versions.compiler.get()
     }
 }
 
 dependencies {
+    implementation(project(":i18n"))
+    implementation(project(":core"))
+    implementation(project(":core-metadata"))
+    implementation(project(":source-api"))
+    implementation(project(":source-local"))
+    implementation(project(":data"))
+    implementation(project(":domain"))
+    implementation(project(":presentation-core"))
+    implementation(project(":presentation-widget"))
+
     // Compose
+    implementation(platform(compose.bom))
     implementation(compose.activity)
     implementation(compose.foundation)
     implementation(compose.material3.core)
-    implementation(compose.material3.adapter)
+    implementation(compose.material.core)
     implementation(compose.material.icons)
     implementation(compose.animation)
-    implementation(compose.ui.tooling)
+    implementation(compose.animation.graphics)
+    debugImplementation(compose.ui.tooling)
+    implementation(compose.ui.tooling.preview)
     implementation(compose.ui.util)
     implementation(compose.accompanist.webview)
-    implementation(compose.accompanist.swiperefresh)
+    implementation(compose.accompanist.systemuicontroller)
+    lintChecks(compose.lintchecks)
 
     implementation(androidx.paging.runtime)
     implementation(androidx.paging.compose)
 
-    implementation(androidx.sqlite)
-    implementation(libs.sqldelight.android.driver)
-    implementation(libs.sqldelight.coroutines)
-    implementation(libs.sqldelight.android.paging)
+    implementation(libs.bundles.sqlite)
 
     implementation(kotlinx.reflect)
-    implementation(kotlinx.bundles.coroutines)
+    implementation(kotlinx.immutables)
 
-    // Source models and interfaces from Tachiyomi 1.x
-    implementation(libs.tachiyomi.api)
+    implementation(platform(kotlinx.coroutines.bom))
+    implementation(kotlinx.bundles.coroutines)
 
     // AndroidX libraries
     implementation(androidx.annotation)
     implementation(androidx.appcompat)
     implementation(androidx.biometricktx)
     implementation(androidx.constraintlayout)
-    implementation(androidx.coordinatorlayout)
     implementation(androidx.corektx)
     implementation(androidx.splashscreen)
     implementation(androidx.recyclerview)
-    implementation(androidx.swiperefreshlayout)
     implementation(androidx.viewpager)
+    implementation(androidx.profileinstaller)
 
     implementation(androidx.bundles.lifecycle)
 
     // Job scheduling
-    implementation(androidx.bundles.workmanager)
+    implementation(androidx.workmanager)
 
-    // RX
-    implementation(libs.bundles.reactivex)
-    implementation(libs.flowreactivenetwork)
+    // RxJava
+    implementation(libs.rxjava)
 
-    // Network client
+    // Networking
     implementation(libs.bundles.okhttp)
     implementation(libs.okio)
+    implementation(libs.conscrypt.android) // TLS 1.3 support for Android < 10
 
-    // TLS 1.3 support for Android < 10
-    implementation(libs.conscrypt.android)
-
-    // Data serialization (JSON, protobuf)
+    // Data serialization (JSON, protobuf, xml)
     implementation(kotlinx.bundles.serialization)
-
-    // JavaScript engine
-    implementation(libs.bundles.js.engine)
 
     // HTML parser
     implementation(libs.jsoup)
@@ -214,104 +207,97 @@ dependencies {
     implementation(libs.unifile)
     implementation(libs.junrar)
 
-    // Database
-    implementation(libs.bundles.sqlite)
-    implementation("com.github.inorichi.storio:storio-common:8be19de@aar")
-    implementation("com.github.inorichi.storio:storio-sqlite:8be19de@aar")
-
     // Preferences
     implementation(libs.preferencektx)
-    implementation(libs.flowpreferences)
-
-    // Model View Presenter
-    implementation(libs.bundles.nucleus)
 
     // Dependency injection
     implementation(libs.injekt.core)
 
     // Image loading
+    implementation(platform(libs.coil.bom))
     implementation(libs.bundles.coil)
-
     implementation(libs.subsamplingscaleimageview) {
         exclude(module = "image-decoder")
     }
     implementation(libs.image.decoder)
 
-    // Sort
-    implementation(libs.natural.comparator)
-
     // UI libraries
     implementation(libs.material)
-    implementation(libs.androidprocessbutton)
     implementation(libs.flexible.adapter.core)
-    implementation(libs.flexible.adapter.ui)
-    implementation(libs.viewstatepageradapter)
     implementation(libs.photoview)
     implementation(libs.directionalviewpager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
     }
     implementation(libs.insetter)
-    implementation(libs.markwon)
+    implementation(libs.bundles.richtext)
     implementation(libs.aboutLibraries.compose)
-
-    // Conductor
-    implementation(libs.bundles.conductor)
-
-    // FlowBinding
-    implementation(libs.bundles.flowbinding)
+    implementation(libs.bundles.voyager)
+    implementation(libs.compose.materialmotion)
+    implementation(libs.swipe)
 
     // Logging
     implementation(libs.logcat)
-
-    // Crash reports/analytics
-    implementation(libs.acra.http)
-    "standardImplementation"(libs.firebase.analytics)
 
     // Shizuku
     implementation(libs.bundles.shizuku)
 
     // Tests
-    testImplementation(libs.junit)
+    testImplementation(libs.bundles.test)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakcanary.android)
     implementation(libs.leakcanary.plumber)
 }
 
-tasks {
-    withType<Test> {
-        useJUnitPlatform()
-        testLogging {
-            events("passed", "skipped", "failed")
+androidComponents {
+    beforeVariants { variantBuilder ->
+        // Disables standardBenchmark
+        if (variantBuilder.buildType == "benchmark") {
+            variantBuilder.enable = variantBuilder.productFlavors.containsAll(
+                listOf("default" to "dev"),
+            )
         }
     }
+    onVariants(selector().withFlavor("default" to "standard")) {
+        // Only excluding in standard flavor because this breaks
+        // Layout Inspector's Compose tree
+        it.packaging.resources.excludes.add("META-INF/*.version")
+    }
+}
 
+tasks {
     // See https://kotlinlang.org/docs/reference/experimental.html#experimental-status-of-experimental-api(-markers)
     withType<KotlinCompile> {
         kotlinOptions.freeCompilerArgs += listOf(
-            "-opt-in=kotlin.Experimental",
-            "-opt-in=kotlin.RequiresOptIn",
-            "-opt-in=kotlin.ExperimentalStdlibApi",
-            "-opt-in=kotlinx.coroutines.FlowPreview",
+            "-Xcontext-receivers",
+            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "-opt-in=androidx.compose.material.ExperimentalMaterialApi",
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.material.ExperimentalMaterialApi",
+            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
+            "-opt-in=androidx.compose.animation.graphics.ExperimentalAnimationGraphicsApi",
+            "-opt-in=coil.annotation.ExperimentalCoilApi",
+            "-opt-in=com.google.accompanist.permissions.ExperimentalPermissionsApi",
             "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "-opt-in=kotlinx.coroutines.FlowPreview",
             "-opt-in=kotlinx.coroutines.InternalCoroutinesApi",
             "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
-            "-opt-in=coil.annotation.ExperimentalCoilApi",
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
-            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"
         )
-    }
 
-    // Duplicating Hebrew string assets due to some locale code issues on different devices
-    val copyHebrewStrings = task("copyHebrewStrings", type = Copy::class) {
-        from("./src/main/res/values-he")
-        into("./src/main/res/values-iw")
-        include("**/*")
-    }
-
-    preBuild {
-        dependsOn(formatKotlin, copyHebrewStrings)
+        if (project.findProperty("tachiyomi.enableComposeCompilerMetrics") == "true") {
+            kotlinOptions.freeCompilerArgs += listOf(
+                "-P",
+                "plugin:androidx.compose.compiler.plugins.kotlin:reportsDestination=" +
+                    project.layout.buildDirectory.dir("compose_metrics").get().asFile.absolutePath,
+            )
+            kotlinOptions.freeCompilerArgs += listOf(
+                "-P",
+                "plugin:androidx.compose.compiler.plugins.kotlin:metricsDestination=" +
+                    project.layout.buildDirectory.dir("compose_metrics").get().asFile.absolutePath,
+            )
+        }
     }
 }
 

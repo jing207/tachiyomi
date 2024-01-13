@@ -110,12 +110,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun SubsamplingScaleImageView.landscapeZoom(forward: Boolean) {
-        if (config != null && config!!.landscapeZoom && config!!.minimumScaleType == SCALE_TYPE_CENTER_INSIDE && sWidth > sHeight && scale == minScale) {
+        if (
+            config != null &&
+            config!!.landscapeZoom &&
+            config!!.minimumScaleType == SCALE_TYPE_CENTER_INSIDE &&
+            sWidth > sHeight &&
+            scale == minScale
+        ) {
             handler?.postDelayed(500) {
                 val point = when (config!!.zoomStartPosition) {
                     ZoomStartPosition.LEFT -> if (forward) PointF(0F, 0F) else PointF(sWidth.toFloat(), 0F)
                     ZoomStartPosition.RIGHT -> if (forward) PointF(sWidth.toFloat(), 0F) else PointF(0F, 0F)
-                    ZoomStartPosition.CENTER -> center.also { it?.y = 0F }
+                    ZoomStartPosition.CENTER -> center
                 }
 
                 val targetScale = height.toFloat() / sHeight.toFloat()
@@ -176,7 +182,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         (pageView as? SubsamplingScaleImageView)?.let { view ->
             RectF().let {
                 view.getPanRemaining(it)
-                return fn(it) > 0
+                return fn(it) > 1
             }
         }
         return false
@@ -249,7 +255,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         when (config?.zoomStartPosition) {
             ZoomStartPosition.LEFT -> setScaleAndCenter(scale, PointF(0F, 0F))
             ZoomStartPosition.RIGHT -> setScaleAndCenter(scale, PointF(sWidth.toFloat(), 0F))
-            ZoomStartPosition.CENTER -> setScaleAndCenter(scale, center.also { it?.y = 0F })
+            ZoomStartPosition.CENTER -> setScaleAndCenter(scale, center)
             null -> {}
         }
     }
@@ -277,10 +283,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         )
 
         when (image) {
-            is Drawable -> {
-                val bitmap = (image as BitmapDrawable).bitmap
-                setImage(ImageSource.bitmap(bitmap))
-            }
+            is BitmapDrawable -> setImage(ImageSource.bitmap(image.bitmap))
             is InputStream -> setImage(ImageSource.inputStream(image))
             else -> throw IllegalArgumentException("Not implemented for class ${image::class.simpleName}")
         }

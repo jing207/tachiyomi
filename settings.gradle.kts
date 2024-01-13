@@ -11,6 +11,7 @@ pluginManagement {
         gradlePluginPortal()
         google()
         mavenCentral()
+        maven(url = "https://www.jitpack.io")
     }
 }
 
@@ -36,3 +37,13 @@ dependencyResolutionManagement {
 
 rootProject.name = "Tachiyomi"
 include(":app")
+include(":i18n")
+include(":source-api")
+include(":core")
+include(":macrobenchmark")
+include(":data")
+include(":domain")
+include(":presentation-widget")
+include(":presentation-core")
+include(":source-local")
+include(":core-metadata")

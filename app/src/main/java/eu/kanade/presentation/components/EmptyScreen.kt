@@ -1,49 +1,49 @@
 package eu.kanade.presentation.components
 
-import android.view.ViewGroup
-import androidx.annotation.StringRes
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.viewinterop.AndroidView
-import eu.kanade.tachiyomi.widget.EmptyView
+import androidx.compose.ui.tooling.preview.PreviewLightDark
+import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import kotlinx.collections.immutable.persistentListOf
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.EmptyScreenAction
 
+@PreviewLightDark
 @Composable
-fun EmptyScreen(
-    @StringRes textResource: Int,
-    actions: List<EmptyView.Action>? = null,
-) {
-    EmptyScreen(
-        message = stringResource(id = textResource),
-        actions = actions,
-    )
+private fun NoActionPreview() {
+    TachiyomiPreviewTheme {
+        Surface {
+            EmptyScreen(
+                stringRes = MR.strings.empty_screen,
+            )
+        }
+    }
 }
 
+@PreviewLightDark
 @Composable
-fun EmptyScreen(
-    message: String,
-    actions: List<EmptyView.Action>? = null,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize(),
-    ) {
-        AndroidView(
-            factory = { context ->
-                EmptyView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    )
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.Center),
-        ) { view ->
-            view.show(message, actions)
+private fun WithActionPreview() {
+    TachiyomiPreviewTheme {
+        Surface {
+            EmptyScreen(
+                stringRes = MR.strings.empty_screen,
+                actions = persistentListOf(
+                    EmptyScreenAction(
+                        stringRes = MR.strings.action_retry,
+                        icon = Icons.Outlined.Refresh,
+                        onClick = {},
+                    ),
+                    EmptyScreenAction(
+                        stringRes = MR.strings.getting_started_guide,
+                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                        onClick = {},
+                    ),
+                ),
+            )
         }
     }
 }
